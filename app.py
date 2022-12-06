@@ -192,6 +192,106 @@ def face_recognition():
  
  
 @app.route('/')
+def login():
+    return render_template('login.html')
+
+@app.route('/login_video_feed')
+def login_video_feed():
+    # Video streaming route. Put this in the src attribute of an img tag
+    return Response(login_face_recognition(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def login_face_recognition():  
+    def draw_boundary(img, classifier, scaleFactor, minNeighbors, color, text, clf):
+        gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        features = classifier.detectMultiScale(gray_image, scaleFactor, minNeighbors)
+ 
+        global justscanned
+        global pause_cnt
+ 
+        pause_cnt += 1
+ 
+        coords = []
+ 
+        for (x, y, w, h) in features:
+            cv2.rectangle(img, (x, y), (x + w, y + h), color, 2)
+            id, pred = clf.predict(gray_image[y:y + h, x:x + w])
+            confidence = int(100 * (1 - pred / 300))
+ 
+            if confidence > 70 and not justscanned:
+                global cnt
+                cnt += 1
+ 
+                n = (100 / 30) * cnt
+                # w_filled = (n / 100) * w
+                w_filled = (cnt / 30) * w
+ 
+                cv2.putText(img, str(int(n))+' %', (x + 20, y + h + 28), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (153, 255, 255), 2, cv2.LINE_AA)
+ 
+                cv2.rectangle(img, (x, y + h + 40), (x + w, y + h + 50), color, 2)
+                cv2.rectangle(img, (x, y + h + 40), (x + int(w_filled), y + h + 50), (153, 255, 255), cv2.FILLED)
+ 
+                mycursor.execute("select a.img_person, b.prs_name, b.prs_skill "
+                                 "  from img_dataset a "
+                                 "  left join prs_mstr b on a.img_person = b.prs_nbr "
+                                 " where img_id = " + str(id))
+                row = mycursor.fetchone()
+                pnbr = row[0]
+                pname = row[1]
+                pskill = row[2]
+ 
+                if int(cnt) == 30:
+                    cnt = 0
+ 
+                    # mycursor.execute("insert into accs_hist (accs_date, accs_prsn) values('"+str(date.today())+"', '" + pnbr + "')")
+                    # mydb.commit()
+ 
+                    cv2.putText(img, pname + ' | ' + pskill, (x - 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (153, 255, 255), 2, cv2.LINE_AA)
+                    time.sleep(1)
+ 
+                    justscanned = True
+                    pause_cnt = 0
+ 
+            else:
+                if not justscanned:
+                    cv2.putText(img, 'Tidak Diketahui', (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
+                else:
+                    cv2.putText(img, ' ', (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2,cv2.LINE_AA)
+ 
+                if pause_cnt > 80:
+                    justscanned = False
+ 
+            coords = [x, y, w, h]
+        return coords
+ 
+    def recognize(img, clf, faceCascade):
+        coords = draw_boundary(img, faceCascade, 1.1, 10, (255, 255, 0), "Face", clf)
+        return img
+ 
+    faceCascade = cv2.CascadeClassifier("resources/haarcascade_frontalface_default.xml")
+    clf = cv2.face.LBPHFaceRecognizer_create()
+    clf.read("classifier.xml")
+ 
+    wCam, hCam = 400, 400
+ 
+    cap = cv2.VideoCapture(0)
+    cap.set(3, wCam)
+    cap.set(4, hCam)
+ 
+    while True:
+        ret, img = cap.read()
+        img = recognize(img, clf, faceCascade)
+ 
+        frame = cv2.imencode('.jpg', img)[1].tobytes()
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+ 
+        key = cv2.waitKey(1)
+        if key == 27:
+            break
+ 
+ 
+ 
+@app.route('/home')
 def home():
     mycursor.execute("select prs_nbr, prs_name, prs_skill, prs_active, prs_added from prs_mstr")
     data = mycursor.fetchall()
